@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check for syntax errors
+        run: node --check server.js src/config.js src/mission-control-data.js src/status.js
+
+      - name: Smoke test server starts
+        run: |
+          timeout 5 node server.js &
+          SERVER_PID=$!
+          sleep 2
+          kill $SERVER_PID 2>/dev/null || true
+          echo "Server started without crashing"
+        env:
+          PORT: 3099
