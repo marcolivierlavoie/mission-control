@@ -6,6 +6,7 @@ const path = require('path');
 const config = require('./src/config');
 const status = require('./src/status');
 const ops = require('./src/mission-control-data');
+const activity = require('./src/activity');
 
 const app = express();
 const PORT = process.env.PORT || 3333;
@@ -223,6 +224,26 @@ app.get('/api/agents', (req, res) => {
   } catch (e) {
     console.error('[API /agents]', e.message);
     res.status(500).json({ error: 'Failed to get agents' });
+  }
+});
+
+// GET /api/activity - Live claude-telegram bot session state
+app.get('/api/activity', async (req, res) => {
+  try {
+    const data = await activity.getActivity();
+    res.json(data);
+  } catch (e) {
+    console.error('[API /activity]', e.message);
+    res.status(500).json({ error: 'Failed to get activity' });
+  }
+});
+
+// GET /api/usage - Claude token usage stats from local session files
+app.get('/api/usage', (req, res) => {
+  try {
+    res.json(ops.getUsageStats());
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to get usage stats' });
   }
 });
 

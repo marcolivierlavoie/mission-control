@@ -868,6 +868,98 @@
             border: 1px solid rgba(255,255,255,0.12);
             background: rgba(255,255,255,0.04);
         }
+
+        /* Activity panel */
+        .activity-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .activity-status-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1.2rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .activity-status-row:last-child {
+            border-bottom: none;
+        }
+
+        .activity-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .activity-dot.alive { background: #00d4aa; animation: pulse 2s infinite; }
+        .activity-dot.dead { background: #ff6464; }
+        .activity-dot.idle { background: #8f97ad; }
+        .activity-dot.thinking { background: #7c83ff; animation: pulse 1.2s infinite; }
+        .activity-dot.working { background: #ffd166; animation: pulse 0.8s infinite; }
+        .activity-dot.unknown { background: #555; }
+
+        .activity-label {
+            color: #888;
+            font-size: 0.85rem;
+            min-width: 110px;
+        }
+
+        .activity-value {
+            color: #fff;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .activity-value.alive { color: #00d4aa; }
+        .activity-value.dead { color: #ff6464; }
+        .activity-value.idle { color: #8f97ad; }
+        .activity-value.thinking { color: #7c83ff; }
+        .activity-value.working { color: #ffd166; }
+
+        .activity-message-box {
+            background: rgba(8, 10, 18, 0.7);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 12px;
+            padding: 0.85rem 1rem;
+            font-family: 'SF Mono', monospace;
+            font-size: 0.8rem;
+            color: #c8d4e8;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .activity-message-box.empty {
+            color: #555;
+            font-style: italic;
+            font-family: inherit;
+        }
+
+        .activity-tmux-output {
+            background: rgba(6, 8, 16, 0.85);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 12px;
+            padding: 0.85rem 1rem;
+            font-family: 'SF Mono', monospace;
+            font-size: 0.75rem;
+            color: #a0b0c0;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 320px;
+            overflow-y: auto;
+        }
+
+        .activity-refresh-note {
+            font-size: 0.75rem;
+            color: #666;
+            text-align: right;
+            margin-top: 0.5rem;
+        }
     </style>
 </head>
 <body>
@@ -878,6 +970,7 @@
                 <div class="view-switch">
                     <button id="tabDashboard" class="tab-btn active" onclick="setView('dashboard')">Dashboard</button>
                     <button id="tabAgents" class="tab-btn" onclick="setView('agents')">Agents</button>
+                    <button id="tabActivity" class="tab-btn" onclick="setView('activity')">Activity</button>
                 </div>
                 <span class="status-badge">Connected</span>
                 <button class="btn" onclick="openSettings()">Settings</button>
@@ -935,8 +1028,10 @@
             sandboxExecCommand: 'node -v',
             ready: false
         };
+        let activityData = null;
         let currentView = 'dashboard';
         let pollTimer = null;
+        let activityPollTimer = null;
         let memorySearchTimer = null;
         let sandboxOutput = '';
 
@@ -1037,10 +1132,21 @@
             currentView = view;
             document.getElementById('tabDashboard').classList.toggle('active', view === 'dashboard');
             document.getElementById('tabAgents').classList.toggle('active', view === 'agents');
+            document.getElementById('tabActivity').classList.toggle('active', view === 'activity');
+            if (view === 'activity') {
+                startActivityPolling();
+                loadActivity();
+            } else {
+                stopActivityPolling();
+            }
             renderActiveView();
         }
 
         function renderActiveView() {
+            if (currentView === 'activity') {
+                renderActivityPage(activityData);
+                return;
+            }
             if (!dashboardData.ready) return;
             if (currentView === 'agents') {
                 renderAgentsPage(dashboardData.agents || []);
@@ -1056,7 +1162,8 @@
                 dashboardData.memory,
                 dashboardData.limits,
                 dashboardData.timeline,
-                dashboardData.alerts
+                dashboardData.alerts,
+                dashboardData.usage
             );
         }
 
@@ -1179,7 +1286,7 @@
             setHeaderStatus('Syncing...', 'warn');
 
             try {
-                const [status, models, plugins, skills, cron, agentsResp, sessions, limits, timeline, memory] = await Promise.all([
+                const [status, models, plugins, skills, cron, agentsResp, sessions, limits, timeline, memory, usage] = await Promise.all([
                     apiJson('/api/status'),
                     apiJson('/api/models'),
                     apiJson('/api/plugins'),
@@ -1189,7 +1296,8 @@
                     apiJson('/api/sessions/active'),
                     apiJson('/api/limits'),
                     apiJson('/api/health/timeline'),
-                    apiJson(`/api/memory?q=${encodeURIComponent(dashboardData.memoryQuery || '')}`)
+                    apiJson(`/api/memory?q=${encodeURIComponent(dashboardData.memoryQuery || '')}`),
+                    apiJson('/api/usage')
                 ]);
 
                 dashboardData = {
@@ -1203,6 +1311,7 @@
                     memory,
                     limits,
                     timeline,
+                    usage,
                     alerts: Array.isArray(limits?.alerts) ? limits.alerts : Array.isArray(timeline?.alerts) ? timeline.alerts : [],
                     memoryQuery: dashboardData.memoryQuery || '',
                     sandboxWebQuery: dashboardData.sandboxWebQuery || '',
@@ -1225,7 +1334,46 @@
             }
         }
 
-        function renderDashboard(status, models, plugins, skills, cron, sessions, memory, limits, timeline, alerts) {
+        function renderUsageCard(usage, limits) {
+            if (!usage) return '<div class="card"><h2>Token Usage</h2><div class="muted">No data available</div></div>';
+            const today = usage.today || {};
+            const days = usage.days || [];
+            const totalToday = usage.totalToday || 0;
+            const cacheHitRate = usage.cacheHitRate || 0;
+            const fmt = n => n >= 1000000 ? (n/1000000).toFixed(1)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n||0);
+            const pct = (a, b) => b > 0 ? Math.round(a/b*100) : 0;
+            const cacheIn = today.cacheRead || 0;
+            const cacheCreation = today.cacheCreation || 0;
+            const inputTokens = today.inputTokens || 0;
+            const outputTokens = today.outputTokens || 0;
+            const maxDay = Math.max(...days.map(d => d.total || 0), 1);
+            const barsHtml = days.map(d => {
+                const h = Math.max(4, Math.round((d.total / maxDay) * 60));
+                return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;" title="${d.date}: ${fmt(d.total)} tokens">
+                    <div style="width:100%;background:#2a2d3e;border-radius:3px;height:60px;display:flex;align-items:flex-end;">
+                        <div style="width:100%;height:${h}px;background:#00d4aa;border-radius:3px;opacity:0.85;"></div>
+                    </div>
+                    <div style="font-size:0.6rem;color:#666;">${d.date.slice(5)}</div>
+                </div>`;
+            }).join('');
+            return `<div class="card">
+                ${renderSectionTitle('Token Usage', 'Today\'s consumption + 7-day trend')}
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:1rem;">
+                    <div class="info-row"><span class="info-label">Total today</span><span class="info-value">${fmt(totalToday)}</span></div>
+                    <div class="info-row"><span class="info-label">Cache hit rate</span><span class="info-value" style="color:#00d4aa;">${cacheHitRate}%</span></div>
+                    <div class="info-row"><span class="info-label">Input</span><span class="info-value">${fmt(inputTokens)}</span></div>
+                    <div class="info-row"><span class="info-label">Output</span><span class="info-value">${fmt(outputTokens)}</span></div>
+                    <div class="info-row"><span class="info-label">Cache reads</span><span class="info-value" style="color:#7c83ff;">${fmt(cacheIn)}</span></div>
+                    <div class="info-row"><span class="info-label">Cache writes</span><span class="info-value">${fmt(cacheCreation)}</span></div>
+                    <div class="info-row"><span class="info-label">Messages today</span><span class="info-value">${today.messages || 0}</span></div>
+                    <div class="info-row" style="grid-column:1/-1;"><span class="info-label">Limit resets</span><span class="info-value" style="color:#ffd166;">${escapeHtml(formatTimestamp(limits?.resetAt))}</span></div>
+                </div>
+                <div style="font-size:0.72rem;color:#888;margin-bottom:0.4rem;">7-day trend</div>
+                <div style="display:flex;gap:4px;align-items:flex-end;height:80px;">${barsHtml}</div>
+            </div>`;
+        }
+
+        function renderDashboard(status, models, plugins, skills, cron, sessions, memory, limits, timeline, alerts, usage) {
             const content = document.getElementById('content');
             const agent = status.agent || {};
             const system = status.system || {};
@@ -1375,6 +1523,8 @@
                             ${renderSectionTitle('Notifications / Alerts', `${items.length} current alert${items.length === 1 ? '' : 's'}`)}
                             <div class="alert-list">${renderAlerts(items)}</div>
                         </div>
+
+                        ${renderUsageCard(usage, limits)}
                     </div>
                 </div>
             `;
@@ -1593,6 +1743,99 @@
             if (!event || event.target.id === 'settingsOverlay') {
                 document.getElementById('settingsOverlay').classList.remove('open');
             }
+        }
+
+        async function loadActivity() {
+            try {
+                activityData = await apiJson('/api/activity');
+                if (currentView === 'activity') renderActivityPage(activityData);
+            } catch (e) {
+                activityData = { error: e.message };
+                if (currentView === 'activity') renderActivityPage(activityData);
+            }
+        }
+
+        function startActivityPolling() {
+            stopActivityPolling();
+            activityPollTimer = setInterval(() => {
+                if (document.visibilityState === 'visible') loadActivity().catch(() => {});
+            }, 5000);
+        }
+
+        function stopActivityPolling() {
+            if (activityPollTimer) { clearInterval(activityPollTimer); activityPollTimer = null; }
+        }
+
+        function renderActivityPage(data) {
+            const content = document.getElementById('content');
+
+            if (!data) {
+                content.innerHTML = '<div class="loading">Loading activity data...</div>';
+                return;
+            }
+
+            if (data.error) {
+                content.innerHTML = `<div class="error">Failed to load activity: ${escapeHtml(data.error)}</div>`;
+                return;
+            }
+
+            const botStatus = data.botStatus || 'unknown';
+            const activity = data.currentActivity || 'unknown';
+            const tmuxAvailable = data.tmuxAvailable !== false;
+            const lastMessage = data.lastMessage || null;
+            const lastTaskSummary = data.lastTaskSummary || null;
+            const rawLines = Array.isArray(data.rawLines) ? data.rawLines : [];
+            const checkedAt = data.checkedAt ? new Date(data.checkedAt).toLocaleTimeString() : 'unknown';
+
+            const activityLabel = { idle: 'Idle', thinking: 'Thinking...', working: 'Working', unknown: 'Unknown' }[activity] || activity;
+
+            content.innerHTML = `
+                <div class="activity-grid">
+                    <div class="card">
+                        <h2>Bot Status</h2>
+                        <div class="activity-status-row">
+                            <div class="activity-dot ${escapeHtml(botStatus)}"></div>
+                            <div class="activity-label">Process</div>
+                            <div class="activity-value ${escapeHtml(botStatus)}">${botStatus === 'alive' ? 'Alive' : 'Dead'}</div>
+                        </div>
+                        <div class="activity-status-row">
+                            <div class="activity-dot ${escapeHtml(activity)}"></div>
+                            <div class="activity-label">Activity</div>
+                            <div class="activity-value ${escapeHtml(activity)}">${escapeHtml(activityLabel)}</div>
+                        </div>
+                        <div class="activity-status-row">
+                            <div class="activity-dot ${tmuxAvailable ? 'alive' : 'dead'}"></div>
+                            <div class="activity-label">tmux session</div>
+                            <div class="activity-value ${tmuxAvailable ? 'alive' : 'dead'}">${tmuxAvailable ? 'claude-telegram' : 'Not found'}</div>
+                        </div>
+                        <div class="activity-refresh-note">Last checked: ${escapeHtml(checkedAt)} · polls every 5s</div>
+                    </div>
+
+                    <div class="card">
+                        <h2>Last Message Received</h2>
+                        ${lastMessage
+                            ? `<div class="activity-message-box">${escapeHtml(lastMessage)}</div>`
+                            : `<div class="activity-message-box empty">No telegram message found in recent output</div>`
+                        }
+                    </div>
+
+                    <div class="card" style="grid-column: 1 / -1;">
+                        <h2>Last Task Summary</h2>
+                        ${lastTaskSummary
+                            ? `<div class="activity-message-box">${escapeHtml(lastTaskSummary)}</div>`
+                            : `<div class="activity-message-box empty">No recent task output available</div>`
+                        }
+                    </div>
+
+                    <div class="card" style="grid-column: 1 / -1;">
+                        <h2>Raw tmux Output (last 30 lines)</h2>
+                        ${tmuxAvailable && rawLines.length
+                            ? `<div class="activity-tmux-output">${escapeHtml(rawLines.join('\n'))}</div>`
+                            : `<div class="activity-message-box empty">tmux session "claude-telegram" not available</div>`
+                        }
+                    </div>
+                </div>
+            `;
         }
 
         function startPolling() {
