@@ -1,14 +1,16 @@
 import { useState } from 'react'
-import { LayoutDashboard, Clock, Puzzle, Menu, X, Activity as ActivityIcon, Wand2, Zap } from 'lucide-react'
+import { LayoutDashboard, Clock, Puzzle, Menu, X, Activity as ActivityIcon, Wand2, Zap, Bot } from 'lucide-react'
 import Dashboard from './pages/Dashboard'
 import Crons from './pages/Crons'
 import Plugins from './pages/Plugins'
 import Activity from './pages/Activity'
 import Skills from './pages/Skills'
+import Agents from './pages/Agents'
 
 const PAGES = [
   { id: 'dashboard', label: 'Dashboard',  icon: LayoutDashboard },
   { id: 'activity',  label: 'Activity',   icon: ActivityIcon },
+  { id: 'agents',    label: 'Agents',     icon: Bot },
   { id: 'crons',     label: 'Scheduled',  icon: Clock },
   { id: 'plugins',   label: 'Plugins',    icon: Puzzle },
   { id: 'skills',    label: 'Skills',     icon: Wand2 },
@@ -97,7 +99,7 @@ export default function App() {
             width: 6, height: 6, borderRadius: '50%',
             background: 'var(--green)', boxShadow: '0 0 6px var(--green)',
           }} />
-          <span style={{ fontSize: 11, color: 'var(--text3)' }}>Agent online · sonnet-4-6</span>
+          <span style={{ fontSize: 11, color: 'var(--text3)' }}>Biff · sonnet-4-6</span>
         </div>
       </nav>
 
@@ -117,6 +119,7 @@ export default function App() {
         {page === 'dashboard' && <Dashboard />}
         {page === 'activity'  && <Activity />}
         {page === 'crons'     && <Crons />}
+        {page === 'agents'    && <Agents />}
         {page === 'plugins'   && <Plugins />}
         {page === 'skills'    && <Skills />}
       </main>

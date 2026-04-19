@@ -1,5 +1,5 @@
 const express = require('express')
-const { execSync } = require('child_process')
+const { execSync, spawnSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
 
@@ -316,6 +316,50 @@ function getBotLive() {
 }
 
 // ── API Routes ───────────────────────────────────────────────────────────────
+
+const SUB_AGENTS = [
+  { id: 'argus',  name: 'Argus',  dir: 'home-infra',        model: 'claude-sonnet-4-6',         emoji: '🏠', domain: 'HA control, Proxmox, NAS, UniFi, AdGuard' },
+  { id: 'vesper', name: 'Vesper', dir: 'personal-assistant', model: 'claude-sonnet-4-6',         emoji: '📅', domain: 'Calendar, Gmail, scheduling' },
+  { id: 'sage',   name: 'Sage',   dir: 'research',           model: 'claude-haiku-4-5-20251001', emoji: '🔍', domain: 'Web lookups, article summaries' },
+  { id: 'forge',  name: 'Forge',  dir: 'dev',                model: 'claude-sonnet-4-6',         emoji: '⚙️',  domain: 'Code, GitHub, deployments' },
+  { id: 'echo',   name: 'Echo',   dir: 'memory',             model: 'claude-haiku-4-5-20251001', emoji: '🧠', domain: 'Memory updates, preference extraction' },
+]
+
+app.get('/api/agents', (req, res) => {
+  const agentsRoot = path.join(process.env.HOME, '.claude', 'agents')
+
+  const runningDirs = new Set()
+  try {
+    const psOut = execSync('ps aux', { encoding: 'utf8', timeout: 3000 })
+    for (const line of psOut.split('\n')) {
+      if (!line.includes('claude') || !line.includes('--print') || line.includes('grep')) continue
+      const pidMatch = line.match(/^\S+\s+(\d+)/)
+      if (!pidMatch) continue
+      const pid = pidMatch[1]
+      if (!/^\d+$/.test(pid)) continue
+      try {
+        const lsof = spawnSync('lsof', ['-p', pid, '-a', '-d', 'cwd', '-Fn'], { encoding: 'utf8', timeout: 2000 })
+        const cwd = (lsof.stdout || '').split('\n').find(l => l.startsWith('n'))?.slice(1)
+        if (cwd) runningDirs.add(cwd)
+      } catch {}
+    }
+  } catch {}
+
+  const agents = SUB_AGENTS.map(agent => {
+    const agentDir = path.join(agentsRoot, agent.dir)
+    let lastResult = null
+    try { lastResult = JSON.parse(fs.readFileSync(path.join(agentDir, 'last_result.json'), 'utf8')) } catch {}
+    return {
+      ...agent,
+      isRunning: runningDirs.has(agentDir),
+      lastStatus: lastResult?.status || 'never_run',
+      lastRunAt: lastResult?.timestamp || null,
+      lastOutput: lastResult?.output ? lastResult.output.slice(0, 200) : null,
+    }
+  })
+
+  res.json({ agents, generatedAt: Date.now() })
+})
 
 app.get('/api/bot-live', (req, res) => {
   res.json(getBotLive())
